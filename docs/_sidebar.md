@@ -2,7 +2,7 @@
 
   - [Início](/)
   - [Transferir chaves](/transferir_chaves.md)
-  - [Criação de usuários administrativos](/criar_usuarios.md)
+  - [Criação de usuários administrativos](/create_users.md)
   - [Preparação do ambiente](/prepare.md)
   - [Configurar o Domain Admin](/config_domain.md)
   - [Configurar o Host Slave](/config_slave.md)
