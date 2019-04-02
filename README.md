@@ -2,6 +2,8 @@
 
 Projeto com playbooks de [Ansible](https://www.ansible.com) para automação da criação de ambientes Wildfly.
 
+*Clique <a href="https://calma-informatica.github.io/ansible-wildfly/" target="_blank">aqui</a> para acessar a documentação*
+
 Os playbooks criam e configuram ambientes wildfly no modo domínio ilustrado conforme imagem abaixo:
 ![](/docs/images/wildfly-diagram.svg)
 
