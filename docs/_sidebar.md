@@ -9,3 +9,4 @@
   - [Acessando a console Web](/console_web.md)
   - [Acessando a página do balanceador](/console_balance.md)
   - [Deploy de aplicação de referência](/deploy_db_app.md)
+  - [Explorando as aplicações de exemplo](/explore_apps.md)
