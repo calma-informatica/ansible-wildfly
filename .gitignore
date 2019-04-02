@@ -1,0 +1,12 @@
+# General
+.DS_Store
+.AppleDouble
+.LSOverride
+
+.vagrant
+
+buffer
+
+*.retry
+
+wildfly-16.0.0.Final.zip

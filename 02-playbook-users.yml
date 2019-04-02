@@ -1,0 +1,70 @@
+---
+- name: "Configure Admin users"
+  hosts: nodes
+  remote_user: root
+  gather_facts: yes
+  tasks:
+    - name: Create /root/.ssh
+      file:
+        path: /root/.ssh
+        mode: 0700
+        owner: root
+        group: root
+        state: directory
+
+    - name: Create a 2048-bit SSH Key for users
+      user:
+        name: "{{ item }}"
+        generate_ssh_key: yes
+        state: present
+        ssh_key_bits: 2048
+        ssh_key_file: ~/.ssh/id_rsa
+        expires: -1
+      with_items:
+        - admin
+        - root
+        - wildfly
+        - apache
+
+    - name: Deploy ssh key to root at all nodes
+      authorized_key:
+        user: root
+        key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+
+    - name: Create user admin
+      user:
+        name: admin
+        create_home: yes
+        password: $6$FvotDjvp6IbXKyo9$kIU09dNl4l5U.PLO2MSmgX.9A6TeVgCjAOie6NPpf4ct29JthpsPEjPH3cKVBeDmEZb9fwAlHkrBBW2Q65Mku0
+        expires: -1
+        shell: /bin/bash
+
+    - name: Add admin user to the sudoers
+      copy:
+        dest: "/etc/sudoers.d/admin"
+        content: "admin  ALL=(ALL)  NOPASSWD: ALL"
+
+    - name: Deploy SSH Key
+      authorized_key: user=admin key="{{ lookup('file', '~/.ssh/id_rsa.pub') }}" state=present
+
+    - name: Create user wildfy
+      user:
+        name: wildfly
+        create_home: yes
+        password: $6$jenkinssalt$D1eLMmigQNjv.9tS/h1psNKYuMKnGWc.ZwmRE3WzIjPyk/DlwF1/3zdRzTERQG0RJrJAZdEYmOPsf7nAz6Dt81
+        expires: -1
+        generate_ssh_key: yes
+
+    - name: Create user apache
+      user:
+        name: apache
+        create_home: yes
+        password: $6$jenkinssalt$D1eLMmigQNjv.9tS/h1psNKYuMKnGWc.ZwmRE3WzIjPyk/DlwF1/3zdRzTERQG0RJrJAZdEYmOPsf7nAz6Dt81
+        expires: -1
+        generate_ssh_key: yes
+
+  handlers:
+   - name: restart ssh
+     service:
+       name=sshd
+       state=restarted

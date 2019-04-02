@@ -1,0 +1,101 @@
+---
+- name: install packages
+  yum:
+    name: ['yum-changelog']
+    state: latest
+
+- name: add CodeIT repository
+  shell: |
+    cd /etc/yum.repos.d && wget https://repo.codeit.guru/codeit.el`rpm -q --qf "%{VERSION}" $(rpm -q --whatprovides redhat-release)`.repo
+
+- name: yum-clean-metadata
+  command: yum clean metadata
+  args:
+    warn: no
+
+- name: upgrade all packages
+  yum:
+    name: '*'
+    state: latest
+    exclude: kernel*,
+
+- name: install packages
+  yum:
+    name: ['httpd', 'mod_ssl']
+    state: latest
+
+- name: Delete line proxy_balancer_module
+  lineinfile:
+    dest: /etc/httpd/conf.modules.d/00-proxy.conf
+    regexp: 'LoadModule proxy_balancer_module modules/mod_proxy_balancer.so'
+    state: absent
+
+- name: Create config for mod_cluster module
+  copy:
+    dest: "/etc/httpd/conf.modules.d/02-modcluster.conf"
+    content: |
+      LoadModule advertise_module modules/mod_advertise.so
+      LoadModule cluster_slotmem_module modules/mod_cluster_slotmem.so
+      LoadModule manager_module modules/mod_manager.so
+      LoadModule proxy_cluster_module modules/mod_proxy_cluster.so
+    group: apache
+    owner: apache
+
+- name: Create the mod_cluster config file
+  copy:
+    dest: "/etc/httpd/conf.d/httpd-modcluster.conf"
+    content: |
+      <IfModule manager_module>
+        Listen *:6680
+        ManagerBalancerName modcluster
+        <VirtualHost *:6680>
+        <Location />
+         Require all granted
+        </Location>
+
+        KeepAliveTimeout 300
+        MaxKeepAliveRequests 0
+        ServerAdvertise on
+        AllowDisplay On
+        AdvertiseFrequency 5
+        EnableMCPMReceive
+
+        <Location /mod_cluster_manager>
+          SetHandler mod_cluster-manager
+          Require all granted
+        </Location>
+        </VirtualHost>
+      </IfModule>
+    group: apache
+    owner: apache
+
+- name: Copy mod_cluster bynaries
+  copy:
+    src: "binary/{{ item }}"
+    dest: "/etc/httpd/modules/{{ item }}"
+    group: apache
+    owner: apache
+    mode: 0755
+  with_items:
+    - mod_advertise.so
+    - mod_cluster_slotmem.so
+    - mod_manager.so
+    - mod_proxy_cluster.so
+
+- name: Replace Server Name
+  lineinfile:
+    path: /etc/httpd/conf/httpd.conf
+    regexp: '#ServerName www.example.com:80'
+    line: 'ServerName {{ wildfly_domain_ip }}'
+
+- name: Enable and start httpd
+  service:
+    name: httpd
+    enabled: yes
+    state: started
+
+- name: wait for port 80
+  wait_for:
+    host: 0.0.0.0
+    port: 80
+    delay: 5

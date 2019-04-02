@@ -1,0 +1,162 @@
+- name: "Configure Virtual Machine"
+  hosts: nodes
+  remote_user: admin
+  become: true
+  become_method: sudo
+  gather_facts: yes
+  vars_files:
+    - playbook-vars.yml
+  tasks:
+    - name: Fetch the public keyfile from one server to another
+      tags: run
+      fetch:
+        src: "~/.ssh/id_rsa.pub"
+        dest: "ssh/{{ansible_hostname}}-id_rsa.pub"
+        flat: yes
+
+    - name: Fetch the private keyfile from one server to another
+      tags: run
+      fetch:
+        src: "~/.ssh/id_rsa"
+        dest: "ssh/{{ansible_hostname}}-id_rsa"
+        flat: yes
+
+    - name: Copy the key add to authorized_keys
+      tags: run
+      authorized_key:
+        user: wildfly
+        state: present
+        key: "{{ lookup('file','ssh/{{item.dest}}-id_rsa.pub')}}"
+      when: "{{ item.dest != ansible_hostname }}"
+      with_items:
+        - { dest: "{{groups['nodes'][0]}}"}
+        - { dest: "{{groups['nodes'][1]}}"}
+        - { dest: "{{groups['nodes'][2]}}"}
+
+    - name: set timezone
+      timezone:
+        name: America/Sao_Paulo
+
+    - name: upgrade all packages
+      yum:
+        name: '*'
+        state: latest
+
+    - name: Install net-tools,wget,epel-release and ntp
+      yum:
+        name: ['net-tools','wget','epel-release','ntp']
+        state: latest
+
+    - name: update ntpd
+      shell: ntpdate -q  a.ntp.br b.ntp.br c.ntp.br
+
+    - name: Enable and start service ntpd
+      service:
+        name: ntpd
+        enabled: yes
+        state: restarted
+
+    - name: upgrade all packages
+      yum:
+        name: '*'
+        state: latest
+
+    - name: Install commom package
+      yum:
+        name: ['htop', 'unzip', 'vim', 'telnet', 'wget', 'java-1.8.0-openjdk-devel']
+        state: latest
+      register: yum_result
+      retries: 10
+      delay: 5
+      until: yum_result is succeeded
+
+    - name: yum-clean-metadata
+      command: yum clean metadata
+      args:
+        warn: no
+
+    - name: upgrade all packages
+      yum:
+        name: '*'
+        state: latest
+        exclude: kernel*,
+
+    - name: Set JAVA_HOME
+      lineinfile:
+        dest: /etc/environment
+        state: present
+        regexp: 'ˆJAVA_HOME'
+        line: 'JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk'
+
+    - name: Check firewall status
+      shell: service firewalld status warn=false
+      register: firewalld_state
+      failed_when: firewalld_state.rc != 0 and ("unrecognized service" not in firewalld_state.stderr)
+      ignore_errors: true
+
+    - name: Udpate firewall roles
+      command: "{{item}}"
+      with_items:
+        - firewall-cmd --permanent --new-service=wildfly
+        - firewall-cmd --permanent --service=wildfly --set-short="Wildfly Service Ports"
+        - firewall-cmd --permanent --service=wildfly --add-port=8080/tcp
+        - firewall-cmd --permanent --service=wildfly --add-port=8443/tcp
+        - firewall-cmd --permanent --service=wildfly --add-port=9990/tcp
+        - firewall-cmd --permanent --service=wildfly --add-port=9999/tcp
+        - firewall-cmd --permanent --service=wildfly --add-port=23364/udp
+        - firewall-cmd --permanent --add-service=wildfly
+        - firewall-cmd --zone=public --add-service=http --permanent
+        - firewall-cmd --zone=public --add-service=https --permanent
+        - firewall-cmd --permanent --add-service=ntp
+        - firewall-cmd --reload
+      when: "firewalld_state.rc == 0 and inventory_hostname in groups['master']"
+      ignore_errors: true
+
+    - name: Disable enforce SELINUX
+      command: setenforce 0
+      ignore_errors: yes
+
+    - name: Configure enforcing
+      command: sed -i 's#=enforcing#=disabled#g' /etc/selinux/config
+      ignore_errors: yes
+
+    - name: Configure iptables
+      shell: "{{ item }}"
+      with_items:
+        - /sbin/iptables -I INPUT -p udp -d 224.0.1.0/24 -j ACCEPT -m comment --comment "mod_cluster traffic"
+        - /sbin/iptables -I INPUT -p udp -d 224.0.0.0/4 -j ACCEPT -m comment --comment "WildFly Cluster traffic"
+        - /sbin/iptables -I INPUT -p udp -s {{ subnet }} -j ACCEPT -m comment --comment "cluster subnet for inter-node communication"
+
+    - name: Disable firewalld
+      service:
+        name: firewalld
+        enabled: no
+        state: stopped
+
+    - name: Disable postfix
+      service:
+        name: postfix
+        enabled: no
+        state: stopped
+
+    - name: Network optimization
+      blockinfile:
+        path: /etc/sysctl.conf
+        block: |
+          net.core.rmem_max=26214400
+          net.core.wmem_max=1048576
+          net.ipv4.tcp_wmem=4096 16384 655360
+          net.ipv4.tcp_rmem=4096 87380 26214400
+          #(RAMgb size x 100000)
+          fs.file-max={{ hostvars[inventory_hostname].ramGbSize * 100000 }}
+
+    - name: reboot node
+      reboot:
+        reboot_timeout: 300
+
+    - name: wait reboot
+      wait_for_connection:
+        connect_timeout: 20
+        sleep: 5
+        delay: 5
+        timeout: 300

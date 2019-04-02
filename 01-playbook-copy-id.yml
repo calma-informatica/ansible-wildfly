@@ -1,0 +1,11 @@
+---
+- name: copy local ssh to remote hosts
+  hosts: 127.0.0.1
+  connection: local
+  tasks:
+    - name: copy ssh key
+      command: ssh-copy-id root@{{ item }}
+      with_items:
+        - 10.1.124.10
+        - 10.1.124.20
+        - 10.1.124.30

@@ -1,0 +1,33 @@
+---
+- name: "Configure Domain admin"
+  hosts: domain-controllers
+  remote_user: admin
+  become: true
+  become_method: sudo
+  gather_facts: yes
+  vars:
+    - httpd_domain: "{{ansible_default_ipv4.address}}.{{default_domain}}"
+  vars_files:
+    - playbook-vars.yml
+  tasks:
+    - name: Copy cluster-db war to remote
+      copy:
+        src: "binary/cluster-db-app.war"
+        dest: /opt/
+        mode: 0755
+        owner: wildfly
+        group: wildfly
+      when: inventory_hostname in groups['domain-admin']
+
+    - name: Undeploy war
+      shell: |
+        cd /opt/wildfly/bin
+        ./jboss-cli.sh --connect --controller={{wildfly_domain_ip}} --command="undeploy cluster-db-app.war --all-relevant-server-groups"
+      when: inventory_hostname in groups['domain-admin']
+      ignore_errors: true
+
+    - name: Deploy war
+      shell: |
+        cd /opt/wildfly/bin
+        ./jboss-cli.sh --connect --controller={{wildfly_domain_ip}} --command="deploy --enabled /opt/cluster-db-app.war --server-groups=test-server-group"
+      when: inventory_hostname in groups['domain-admin']

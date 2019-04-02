@@ -1,0 +1,399 @@
+---
+- name: unzip wildfly
+  unarchive:
+    src: binary/wildfly-16.0.0.Final.zip
+    dest: /opt
+    owner: wildfly
+    group: wildfly
+
+- name: create symlink to wildfly
+  file:
+    src: /opt/wildfly-16.0.0.Final
+    dest: /opt/wildfly
+    owner: wildfly
+    group: wildfly
+    state: link
+
+- name: create user wildfly admin
+  shell: |
+    cd /opt/wildfly/bin
+    ./add-user.sh -m -u {{wildfly_admin}} -p {{wildfly_passwd}}
+    ./add-user.sh -m -u {{wildfly_deployer}} -p {{wildfly_deployer_passwd}}
+    ./add-user.sh -m -u {{wildfly_monitor}} -p {{wildfly_monitor_passwd}}
+
+- name: remove unused files for domain admin
+  file:
+    path: /opt/wildfly/domain/configuration/{{ item }}
+    state: absent
+  with_items:
+    - host.xml
+    - host-slave.xml
+  when: inventory_hostname in groups['domain-admin']
+
+- name: rename host-master as host.xml
+  command: mv /opt/wildfly/domain/configuration/host-master.xml /opt/wildfly/domain/configuration/host.xml
+  when: inventory_hostname in groups['domain-admin']
+
+- name: remove unused files for domain slave
+  file:
+    path: /opt/wildfly/domain/configuration/{{ item }}
+    state: absent
+  with_items:
+    - host-master.xml
+    - host.xml
+  when: inventory_hostname in groups['domain-controllers']
+
+- name: rename host-slave as host.xml
+  command: mv /opt/wildfly/domain/configuration/host-slave.xml /opt/wildfly/domain/configuration/host.xml
+  when: inventory_hostname in groups['domain-controllers']
+
+- name: mark for deletion unused files
+  find:
+    paths: /opt/wildfly/bin
+    patterns: "*.bat,*.ps1"
+  register: unused_files_to_delete
+
+- name: delete unused files
+  file:
+    path: "{{ item.path }}"
+    state: absent
+  with_items: "{{ unused_files_to_delete.files }}"
+
+- name: generate files to manage servers, groups, inet address, logger
+  copy:
+    dest: /opt/group_and_servers.cli
+    content: |
+      embed-host-controller
+      /profile=ha/subsystem=core-management/service=configuration-changes:add(max-history=20)
+      try
+        /host=master/server-config=server-three:remove()
+      catch
+      end-try
+      try
+        /host=master/server-config=server-two:remove()
+      catch
+      end-try
+      try
+        /host=master/server-config=server-one:remove()
+      catch
+      end-try
+      try
+        /server-group=other-server-group:remove()
+      catch
+      end-try
+      try
+        /server-group=main-server-group:remove()
+      catch
+      end-try
+      try
+        /server-group=test-server-group:remove()
+      catch
+      end-try
+      try
+        /profile=ha/subsystem=logging/size-rotating-file-handler=SIZEHANDLER:remove()
+      catch
+      end-try
+      try
+        /profile=ha/subsystem=logging/root-logger=ROOT:remove-handler(name=SIZEHANDLER)
+      catch
+      end-try
+      /server-group=test-server-group:add(profile=ha,socket-binding-group=ha-sockets,socket-binding-port-offset=5)
+      /server-group=test-server-group/jvm=default:add(heap-size=64m, max-heap-size=256m,permgen-size=128m,max-permgen-size=256m,type=OTHER)
+      /server-group=test-server-group/jvm=default:add-jvm-option(jvm-option=-server)
+      /server-group=test-server-group/jvm=default:add-jvm-option(jvm-option="-XX:MetaspaceSize=96m")
+      /server-group=test-server-group/jvm=default:add-jvm-option(jvm-option="-XX:MaxMetaspaceSize=256m")
+      /server-group=test-server-group/system-property=var:add(value=value)
+      /host=master/interface=management:write-attribute(name=inet-address,value=${jboss.bind.address.management:{{ ansible_default_ipv4.address }}})
+      /interface=management:write-attribute(name=any-address,value=true)
+      /interface=public:write-attribute(name=any-address,value=true)
+      /profile=ha/subsystem=logging/size-rotating-file-handler=SIZEHANDLER:add(append=true,autoflush=true,file={relative-to=>"jboss.server.log.dir",path=>"wildflysizelog.log"},max-backup-index=10,rotate-on-boot=false,rotate-size=10m)
+      /profile=ha/subsystem=logging/size-rotating-file-handler=SIZEHANDLER:write-attribute(name=formatter,value="%d{dd/MM/yyyy HH:mm:ss,SSS} %-5p [%c] (%t) %s%E%n")
+      /profile=ha/subsystem=logging/root-logger=ROOT:add-handler(name=SIZEHANDLER)
+      /interface=private/:write-attribute(name=inet-address,value={{ ansible_default_ipv4.address }})
+      /interface=unsecure/:write-attribute(name=inet-address,value={{ ansible_default_ipv4.address }})
+      /socket-binding-group=standard-sockets:remove()
+      /socket-binding-group=full-sockets:remove()
+      /socket-binding-group=full-ha-sockets:remove()
+      /profile=default:remove()
+      /profile=full:remove()
+      /profile=full-ha:remove()
+      reload --host=master --admin-only
+      stop-embedded-host-controller
+      exit
+  when: inventory_hostname in groups['domain-admin']
+
+- name: execute commands manage server and groups
+  command: sh /opt/wildfly/bin/jboss-cli.sh --file=/opt/group_and_servers.cli
+  when: inventory_hostname in groups['domain-admin']
+
+- name: copy wildfly init.d
+  copy:
+    src: /opt/wildfly/docs/contrib/scripts/init.d/wildfly-init-redhat.sh
+    dest: /etc/init.d/wildfly
+    remote_src: yes
+    mode: 0755
+
+- name: copy wildfly.conf etc/default
+  copy:
+    src: /opt/wildfly/docs/contrib/scripts/init.d/wildfly.conf
+    dest: /etc/default/wildfly
+    remote_src: yes
+
+- name: edit wildfly.conf jboss_home
+  lineinfile:
+    path: /etc/default/wildfly
+    regexp: '# JBOSS_HOME="/opt/wildfly"'
+    line: 'JBOSS_HOME="/opt/wildfly"'
+
+- name: edit wildfly.conf jboss user
+  lineinfile:
+    path: /etc/default/wildfly
+    regexp: '# JBOSS_USER=wildfly'
+    line: 'JBOSS_USER=wildfly'
+
+- name: edit wildfly.conf jboss mode
+  lineinfile:
+    path: /etc/default/wildfly
+    regexp: '# JBOSS_MODE=standalone'
+    line: 'JBOSS_MODE=domain'
+
+- name: edit wildfly.conf jboss domain config
+  lineinfile:
+    path: /etc/default/wildfly
+    regexp: '# JBOSS_DOMAIN_CONFIG=domain.xml'
+    line: 'JBOSS_DOMAIN_CONFIG=domain.xml'
+
+- name: edit wildfly.conf jboss domain config
+  lineinfile:
+    path: /etc/default/wildfly
+    regexp: '# JBOSS_HOST_CONFIG=host-master.xml'
+    line: 'JBOSS_HOST_CONFIG=host.xml'
+
+- name: edit wildfly.conf jboss domain config
+  lineinfile:
+    path: /etc/default/wildfly
+    regexp: '# JBOSS_OPTS="--admin-only -b 127.0.0.1"'
+    line: 'JBOSS_OPTS="-Djboss.domain.master.address={{ wildfly_domain_ip }}"'
+
+- name: Edit Wildfly domain conf
+  template:
+    src: domain.conf.j2
+    dest: /opt/wildfly/bin/domain.conf
+    owner: wildfly
+    group: wildfly
+    mode: 0644
+
+- name: Edit wildfly host slave name
+  lineinfile:
+    path: /opt/wildfly/domain/configuration/host.xml
+    regex: '<host xmlns="urn:jboss:domain:10.0">'
+    line: '<host xmlns="urn:jboss:domain:10.0" name="{{ ansible_hostname }}">'
+  when: inventory_hostname in groups['domain-controllers']
+
+- name: generate cli files
+  copy:
+    dest: /opt/commands.cli
+    content: |
+      embed-host-controller
+      /host={{ ansible_hostname }}:remove-remote-domain-controller()
+      /host={{ ansible_hostname }}:write-remote-domain-controller(host="{{ wildfly_domain_ip }}",port="${jboss.domain.master.port:9999}",username="{{ wildfly_admin }}",security-realm="ManagementRealm",protocol="${jboss.domain.master.protocol:remote+http}")
+      /host={{ ansible_hostname }}/core-service=management/security-realm=ManagementRealm/server-identity=secret:remove()
+      /host={{ ansible_hostname }}/core-service=management/security-realm=ManagementRealm/server-identity=secret:add(value="{{ wildfly_passwd_base64 }}")
+      /host={{ ansible_hostname }}/interface=management:write-attribute(name=inet-address,value={{ ansible_default_ipv4.address }})
+      /host={{ ansible_hostname }}/interface=public:write-attribute(name=inet-address,value={{ ansible_default_ipv4.address }})
+      try
+        /host={{ ansible_hostname }}/server-config=server-one:remove()
+      catch
+      end-try
+      try
+        /host={{ ansible_hostname }}/server-config=server-two:remove()
+      catch
+      end-try
+      try
+        /host={{ ansible_hostname }}/server-config=test-{{ ansible_hostname }}:remove()
+      catch
+      end-try
+      /host={{ ansible_hostname }}/server-config=test-{{ ansible_hostname }}:add(group="test-server-group")
+      /host={{ ansible_hostname }}/interface=private/:add(inet-address={{ ansible_default_ipv4.address }})
+
+      reload --host={{ ansible_hostname }} --admin-only
+      stop-embedded-host-controller
+      exit
+  when: inventory_hostname in groups['domain-controllers']
+
+- name: execute jboss-cli scripts
+  command: sh /opt/wildfly/bin/jboss-cli.sh --file=/opt/commands.cli
+  when: inventory_hostname in groups['domain-controllers']
+
+- name: Change onwership for wildfly folder
+  command: "{{ item }}"
+  with_items:
+    - chown -R wildfly:wildfly /opt/wildfly
+    - chown -R wildfly:wildfly /opt/wildfly-16.0.0.Final
+
+- name: Enable wildfly service
+  command: "{{ item }}"
+  with_items:
+    - chkconfig --add wildfly
+    - chkconfig --level 2345 wildfly on
+
+- name: Enable Wildfly Service
+  service:
+    name: wildfly
+    state: stopped
+    enabled: yes
+
+- name: copy jdbc drivers jars to remote
+  copy:
+    src: "binary/{{ item }}"
+    dest: /opt/
+    mode: 0755
+    owner: wildfly
+    group: wildfly
+  with_items:
+    - informix-jdbc-4.10.12.jar
+    - mysql-connector-java-8.0.15.jar
+    - postgresql-42.2.5.jar
+    - ojdbc8.jar
+  when: inventory_hostname in groups['domain-controllers']
+
+- name: generate cli file to create module
+  copy:
+    dest: /opt/ds-command.cli
+    content: |
+      module add --name=com.oracle.jdbc --resources=/opt/ojdbc8.jar --dependencies=javax.api,javax.transaction.api
+      module add --name=com.postgresql --resources=/opt/postgresql-42.2.5.jar --dependencies=javax.api,javax.transaction.api
+      module add --name=com.oracle.mysql --resources=/opt/mysql-connector-java-8.0.15.jar --dependencies=javax.api,javax.transaction.api
+      module add --name=com.ibm.jdbc --resources=/opt/informix-jdbc-4.10.12.jar --dependencies=javax.api,javax.transaction.api
+  when: inventory_hostname in groups['domain-controllers']
+
+- name: execute ds-command-cli script
+  command: sh /opt/wildfly/bin/jboss-cli.sh --file=/opt/ds-command.cli
+  when: inventory_hostname in groups['domain-controllers']
+
+- name: create script to register jdbc drivers
+  copy:
+    dest: /opt/drivers-command.cli
+    content: |
+      embed-host-controller
+      /profile=ha/subsystem=datasources/jdbc-driver=oracle:add(driver-module-name=com.oracle.jdbc,driver-name=oracle,driver-xa-datasource-class-name=oracle.jdbc.xa.client.OracleXADataSource)
+      /profile=ha/subsystem=datasources/jdbc-driver=postgresql:add(driver-module-name=com.postgresql,driver-name=postgresql,driver-xa-datasource-class-name=org.postgresql.xa.PGXADataSource)
+      /profile=ha/subsystem=datasources/jdbc-driver=mysql:add(driver-name=mysql,driver-module-name=com.oracle.mysql,driver-xa-datasource-class-name=com.mysql.cj.jdbc.MysqlXADataSource, driver-class-name=com.mysql.jdbc.Driver)
+      reload --host=master --admin-only
+      stop-embedded-host-controller
+      exit
+  when: inventory_hostname in groups['domain-admin']
+
+- name: execute drivers-command.cli script
+  command: sh /opt/wildfly/bin/jboss-cli.sh --file=/opt/drivers-command.cli
+  when: inventory_hostname in groups['domain-admin']
+
+- name: create script to create datasources
+  copy:
+    dest: /opt/datasource-command.cli
+    content: |
+      embed-host-controller
+      data-source add --profile=ha --name={{ oracle_ds_name }} --jndi-name=java:jboss/datasources/{{ oracle_ds_name }} --driver-name=oracle --connection-url={{ oracle_ds_url }} --user-name={{ oracle_ds_user }} --password={{ oracle_ds_pass }} --validate-on-match=true --background-validation=true --valid-connection-checker-class-name=org.jboss.jca.adapters.jdbc.extensions.oracle.OracleValidConnectionChecker --exception-sorter-class-name=org.jboss.jca.adapters.jdbc.extensions.oracle.OracleExceptionSorter --stale-connection-checker-class-name=org.jboss.jca.adapters.jdbc.extensions.oracle.OracleStaleConnectionChecker --min-pool-size={{ oracle_ds_min_pool }} --max-pool-size={{ oracle_ds_max_pool }} --track-statements=true --idle-timeout-minutes=5 --statistics-enabled=true --enabled=true --query-timeout={{ oracle_ds_query_timeout }} --prepared-statements-cache-size=300 --set-tx-query-timeout=true --use-java-context=true
+      /profile=ha/subsystem=datasources/data-source={{ oracle_ds_name }}/connection-properties="v$session.program":add(value=WildflyDataSource)
+      data-source add --profile=ha --name={{ postgres_ds_name }} --jndi-name=java:jboss/datasources/{{ postgres_ds_name }} --driver-name=postgresql --connection-url={{ postgres_ds_url }} --user-name={{ postgres_ds_user }} --password={{ postgres_ds_pass }} --validate-on-match=true --background-validation=true --valid-connection-checker-class-name=org.jboss.jca.adapters.jdbc.extensions.postgres.PostgreSQLValidConnectionChecker --exception-sorter-class-name=org.jboss.jca.adapters.jdbc.extensions.postgres.PostgreSQLExceptionSorter --stale-connection-checker-class-name=org.jboss.jca.adapters.jdbc.extensions.oracle.OracleStaleConnectionChecker --min-pool-size={{ postgres_ds_min_pool }} --max-pool-size={{ postgres_ds_max_pool }} --track-statements=true --idle-timeout-minutes=5 --statistics-enabled=true --enabled=true --query-timeout={{ postgres_ds_query_timeout }} --prepared-statements-cache-size=300 --set-tx-query-timeout=true --use-java-context=true
+      reload --host=master --admin-only
+      stop-embedded-host-controller
+      exit
+  when: inventory_hostname in groups['domain-admin']
+
+- name: execute datasource-command.cli script
+  command: sh /opt/wildfly/bin/jboss-cli.sh --file=/opt/datasource-command.cli
+  when: inventory_hostname in groups['domain-admin']
+
+- name: create script to configure Web e Cache Container
+  copy:
+    dest: /opt/web-cache-command.cli
+    content: |
+      embed-host-controller
+      try
+        /profile=ha/subsystem=undertow/configuration=filter/gzip=zipfilter/:add()
+        /profile=ha/subsystem=undertow/server=default-server/host=default-host/filter-ref=zipfilter/:add()
+      catch
+      end-try
+      /profile=ha/subsystem=undertow/:write-attribute(name=statistics-enabled,value=true)
+      try
+        /profile=ha/subsystem=infinispan/cache-container=web/replicated-cache=repl/:add(mode=ASYNC)
+        /profile=ha/subsystem=infinispan/cache-container=web/:write-attribute(name=default-cache,value=repl)
+        /profile=ha/subsystem=infinispan/cache-container=web/replicated-cache=repl/:write-attribute(name=mode,value=ASYNC)
+        /profile=ha/subsystem=infinispan/cache-container=web/replicated-cache=repl/component=eviction/:write-attribute(name=strategy,value=LIRS)
+        /profile=ha/subsystem=infinispan/cache-container=web/replicated-cache=repl/component=expiration/:write-attribute(name=max-idle,value=3600000)
+      catch
+      end-try
+      /profile=ha/subsystem=modcluster/proxy=default/:write-attribute(name=proxy-list,value={{wildfly_domain_ip}}:6680)
+      /profile=ha/subsystem=modcluster/proxy=default/load-provider=dynamic/load-metric=cpu/:write-attribute(name=capacity,value=1.0)
+      /profile=ha/subsystem=modcluster/proxy=default/load-provider=dynamic/load-metric=cpu/:write-attribute(name=weight,value=2)
+      try
+        /profile=ha/subsystem=modcluster/proxy=default/load-provider=dynamic/load-metric=heap/:add(type=heap,capacity=1.0,weight=1)
+      catch
+      end-try
+      /core-service=management/access=authorization/:write-attribute(name=provider,value=rbac)
+      try
+        /core-service=management/access=authorization/role-mapping=SuperUser/include={{wildfly_admin}}/:add(type=USER,name={{wildfly_admin}})
+      catch
+      end-try
+      try
+        /core-service=management/access=authorization/role-mapping=Monitor/:add()
+        /core-service=management/access=authorization/role-mapping=Deployer/:add()
+        /core-service=management/access=authorization/role-mapping=Monitor/include={{wildfly_monitor}}/:add(type=USER,name={{wildfly_monitor}})
+        /core-service=management/access=authorization/role-mapping=Deployer/include={{wildfly_deployer}}/:add(type=USER,name={{wildfly_deployer}})
+      catch
+      end-try
+      reload --host=master --admin-only
+      stop-embedded-host-controller
+      exit
+  when: inventory_hostname in groups['domain-admin']
+
+- name: execute drivers-command.cli script
+  command: sh /opt/wildfly/bin/jboss-cli.sh --file=/opt/web-cache-command.cli
+  when: inventory_hostname in groups['domain-admin']
+
+- name: Change onwership for wildfly folder
+  command: "{{ item }}"
+  with_items:
+    - chown -R wildfly:wildfly /opt/wildfly
+    - chown -R wildfly:wildfly /opt/wildfly-16.0.0.Final
+
+- name: Enable Wildfly Service
+  service:
+    name: wildfly
+    state: started
+    enabled: yes
+
+- name: Copy Deploy wars to remote
+  copy:
+    src: "binary/{{ item }}"
+    dest: /opt/
+    mode: 0755
+    owner: wildfly
+    group: wildfly
+  with_items:
+    - cluster-app.war
+    - counter.war
+  when: inventory_hostname in groups['domain-admin']
+
+- name: wait for port 9990
+  wait_for:
+    host: 0.0.0.0
+    port: 9990
+    delay: 10
+  when: inventory_hostname in groups['domain-admin']
+
+- name: Undeploy wars
+  shell: |
+    cd /opt/wildfly/bin
+    ./jboss-cli.sh --connect --controller={{wildfly_domain_ip}} --command="undeploy cluster-app.war --all-relevant-server-groups"
+    ./jboss-cli.sh --connect --controller={{wildfly_domain_ip}} --command="undeploy counter.war --all-relevant-server-groups"
+  when: inventory_hostname in groups['domain-admin']
+  ignore_errors: true
+
+- name: Deploy wars
+  shell: |
+    cd /opt/wildfly/bin
+    ./jboss-cli.sh --connect --controller={{wildfly_domain_ip}} --command="deploy --enabled /opt/cluster-app.war --server-groups=test-server-group"
+    ./jboss-cli.sh --connect --controller={{wildfly_domain_ip}} --command="deploy --enabled /opt/counter.war --server-groups=test-server-group"
+  when: inventory_hostname in groups['domain-admin']

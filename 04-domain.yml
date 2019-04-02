@@ -1,0 +1,14 @@
+---
+- name: "Configure Domain admin"
+  hosts: domain-admin
+  remote_user: admin
+  become: true
+  become_method: sudo
+  gather_facts: yes
+  vars:
+    - httpd_domain: "{{ansible_default_ipv4.address}}.{{default_domain}}"
+  vars_files:
+    - playbook-vars.yml
+  tasks:
+    - include_tasks: apache.yml
+    - include_tasks: wildfly.yml
