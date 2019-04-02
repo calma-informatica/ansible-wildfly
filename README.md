@@ -25,5 +25,3 @@ Os seguintes passos são automatizados pelo playbook:
     * para acessar: http://[CLUSTER_IP]/counter
   * cluster-app
     * para acessar: http://[CLUSTER_IP]/cluster-app
-
-Faça o clone do repositório https://github.com/calma-informatica/ansible-wildfly.git.
