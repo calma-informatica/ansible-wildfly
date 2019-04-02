@@ -27,7 +27,7 @@ Os seguintes passos são automatizados pelo playbook:
     * para acessar: http://[CLUSTER_IP]/cluster-app
 
 
-## Faça o clone do repositório https://github.com/calma-informatica/ansible-wildfly.git.
+## Faça o clone do repositório GIT
 ```
 git clone https://github.com/calma-informatica/ansible-wildfly.git
 ```
