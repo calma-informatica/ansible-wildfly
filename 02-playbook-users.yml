@@ -1,7 +1,9 @@
 ---
 - name: "Configure Admin users"
   hosts: nodes
-  remote_user: root
+  remote_user: marcelo.sales
+  become: true
+  become_method: sudo
   gather_facts: yes
   tasks:
     - name: Create /root/.ssh

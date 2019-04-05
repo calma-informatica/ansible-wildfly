@@ -10,24 +10,17 @@
   vars_files:
     - playbook-vars.yml
   tasks:
-    - name: Copy cluster-db war to remote
-      copy:
-        src: "binary/cluster-db-app.war"
-        dest: /opt/
-        mode: 0755
-        owner: wildfly
-        group: wildfly
-      when: inventory_hostname in groups['domain-admin']
-
-    - name: Undeploy war
+    - name: Undeploy wars
       shell: |
         cd /opt/wildfly/bin
-        ./jboss-cli.sh --connect --controller={{wildfly_domain_ip}} --command="undeploy cluster-db-app.war --all-relevant-server-groups"
+        ./jboss-cli.sh --connect --controller={{wildfly_domain_ip}} --command="undeploy cluster-app.war --all-relevant-server-groups"
+        ./jboss-cli.sh --connect --controller={{wildfly_domain_ip}} --command="undeploy counter.war --all-relevant-server-groups"
       when: inventory_hostname in groups['domain-admin']
       ignore_errors: true
 
-    - name: Deploy war
+    - name: Deploy wars
       shell: |
         cd /opt/wildfly/bin
-        ./jboss-cli.sh --connect --controller={{wildfly_domain_ip}} --command="deploy --enabled /opt/cluster-db-app.war --server-groups=test-server-group"
+        ./jboss-cli.sh --connect --controller={{wildfly_domain_ip}} --command="deploy --enabled /opt/cluster-app.war --server-groups=test-server-group"
+        ./jboss-cli.sh --connect --controller={{wildfly_domain_ip}} --command="deploy --enabled /opt/counter.war --server-groups=test-server-group"
       when: inventory_hostname in groups['domain-admin']

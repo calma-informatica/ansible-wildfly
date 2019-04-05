@@ -378,7 +378,7 @@
 
 - name: wait for port 9990
   wait_for:
-    host: 0.0.0.0
+    host: "{{wildfly_domain_ip}}"
     port: 9990
     delay: 10
   when: inventory_hostname in groups['domain-admin']

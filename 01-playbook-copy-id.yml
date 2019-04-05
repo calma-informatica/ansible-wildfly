@@ -4,8 +4,8 @@
   connection: local
   tasks:
     - name: copy ssh key
-      command: ssh-copy-id root@{{ item }}
+      command: ssh-copy-id marcelo.sales@{{ item }}
       with_items:
-        - 10.1.124.10
-        - 10.1.124.20
-        - 10.1.124.30
+        - 172.20.2.81
+        - 172.20.2.82
+        - 172.20.2.83
