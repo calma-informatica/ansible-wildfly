@@ -1,6 +1,7 @@
 - Montagem do ambiente
 
   - [Início](/)
+  - [Pré Requsitos](/pre-reqs.md)
   - [Transferir chaves](/transferir_chaves.md)
   - [Criação de usuários administrativos](/create_users.md)
   - [Preparação do ambiente](/prepare.md)
